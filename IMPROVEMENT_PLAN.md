@@ -1,279 +1,365 @@
-# 🗺 План развития `Rust-auth-ms` → полноценный Auth МС
+# Improvement Plan: rust-test-ms → production-ready auth MS
 
-> **Цель:** превратить существующий CRUD-над-пользователями в переиспользуемый микросервис авторизации с управлением ролями, который можно подключить к любому проекту «как зависимость».
->
-> **Ключевая идея:** через месяц ты пишешь новый проект, добавляешь его в docker-compose рядом с этим МС, настраиваешь 5 env-переменных — и получаешь полный OAuth2/OIDC + роли + аудит без копипасты.
+> **Цель:** превратить учебный `rust-test-ms` в полноценный переиспользуемый auth микросервис, который можно за пару минут подключить к любому проекту.
 
----
-
-## 📊 Текущее состояние (найдено при разведке)
-
-### ✅ Что уже хорошо
-- **Стек:** Rocket 0.5.0-rc.2 + Diesel 1.4.5 + PostgreSQL + Argon2 + jsonwebtoken — зрелые, безопасные выборы
-- **Архитектура:** классическая 3-слойная (controllers → services → repositories), разделение ответственности есть
-- **Auth flow:** JWT access + refresh (HS256, env-конфигурируемые TTL)
-- **12 эндпоинтов** работают: auth (login/register/refresh/change-password), users (CRUD + list), roles (CRUD + list)
-- **Guards:** TokenAuth (валидный JWT) + AdminAuth (JWT + role_id)
-- **Схема БД:** users + roles с UUID PK
-- **Bootstrap:** авто-создание роли `admin` и пользователя `admin/admin123` при первом запуске
-- **Error handling:** CustomError → ErrorResponse с HTTP-кодами
-- **Пагинация:** size/page → total_count/total_pages
-- **~1000 строк** Rust — компактно, понятно
-
-### ❌ Критические пробелы
-
-| Категория | Что отсутствует |
-|---|---|
-| **Тестирование** | Ноль тестов: ни unit, ни integration, ни test-БД |
-| **DevOps** | Нет CI (GitHub Actions), Dockerfile, docker-compose, миграционного runner'а |
-| **Документация** | Нет README, .env.example, LICENSE, OpenAPI/Swagger |
-| **Observability** | Нет логирования (только `.expect()` → panic), метрик, трейсинга |
-| **Безопасность** | Нет rate-limit, brute-force защиты, refresh-rotation, blacklist'а токенов |
-| **Email** | Поле `email` отсутствует → логин по `name` (не уникален, неудобен) |
-| **Верификация** | Нет email-verify, password-reset, MFA/TOTP |
-| **Стандарты** | Нет OAuth2/OIDC, нет `/v1/` versioning, нет PKCE |
-| **Мульти-тенантность** | Single-tenant, нет изоляции по проектам |
-| **Production** | Нет K8s-манифестов, Helm chart, graceful shutdown, health-checks |
-| **Качество кода** | `.expect()` повсюду, `routes.rs` — мёртвый код, устаревшие зависимости |
-| **RBAC** | Роль одна на пользователя, нет permission'ов, нет many-to-many |
-| **Аудит** | Нет лога «кто что когда сделал» |
-| **Секреты** | `SECRET_KEY` без валидации, дефолтный `admin123` — prod-риск |
+> **Статус:** плановый документ. Без кода — только roadmap, обсуждение направления и оценки.
 
 ---
 
-## 🏗 План: 6 фаз, каждая = mergeable PR
+## Решения (применены 2026-06-12, 8 ответов)
 
-Каждая фаза заканчивается **работающим, протестированным, обратно совместимым** состоянием. Если что-то в середине пойдёт не так — откатываем один PR, остальное стоит.
-
-### Phase 0 — Гигиена и зависимости
-**Цель:** сделать репо пригодным для стороннего разработчика. _Не ломает API._
-
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 0.1 | Переименовать пакет: `rust-test-ms` → `auth-ms` | 5 мин |
-| 0.2 | Bump: Rocket 0.5.0-rc.2 → 0.5.1, Diesel 1.4.5 → 2.2.x, обновить остальные | 1-2 ч |
-| 0.3 | `README.md` — quickstart, env, API, deployment, contributing | 2 ч |
-| 0.4 | `.env.example` с описанием каждой переменной | 30 мин |
-| 0.5 | `LICENSE` (MIT или Apache-2.0 — на твой выбор) | 5 мин |
-| 0.6 | `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md` | 1 ч |
-| 0.7 | `.gitignore` — добавить `.env`, `target/`, IDE-мусор | 5 мин |
-| 0.8 | Удалить мёртвый `src/routes.rs` (он не используется в `main.rs`) | 5 мин |
-| 0.9 | Поправить `package.metadata` в `Cargo.toml` (repo, license, description) | 10 мин |
-
-**PR:** `chore: phase-0 — repo hygiene, dep bumps, docs`
-**Тесты:** `cargo build` + `cargo run` (smoke)
+| #  | Вопрос                         | Ответ                                       | Влияние на план                                                          |
+| -- | ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------ |
+| 1  | Лицензия                       | Для личного использования                   | `LICENSE` (MIT) добавляется в Phase 0                                    |
+| 2  | Скоуп                          | OAuth2-провайдер + свой UI в перспективе    | Phase 4: фокус на API + admin API endpoints; UI — позже                 |
+| 3  | Email                          | Встроенный, но pluggable                    | Phase 2: trait `EmailSender` + SMTP-impl + file-based для dev            |
+| 4  | Tenants                        | Пока не понимаю                              | Phase 5 (multi-tenancy) **убран**, перенесён в **Future**               |
+| 5  | gRPC                           | Потом добавим                                | Убран из Phase 4 → **Future** (Phase 7+)                                 |
+| 6  | Migration runner               | Не очень понимаю                             | Дефолт: `diesel migration run` в entrypoint; override через `RUN_MIGRATIONS=false` для K8s Job-паттерна |
+| 7  | OpenAPI UI                     | **Scalar**                                  | Phase 4: Scalar вместо Swagger UI                                        |
+| 8  | Стек                           | **Axum вместо Rocket**                       | **Phase 0 полностью переписан** — переезд HTTP слоя                      |
 
 ---
 
-### Phase 1 — Качество кода и DevOps
-**Цель:** сделать так, чтобы можно было спать спокойно, делая изменения.
+## Phase 0: Rewrite HTTP layer on Axum — **~15-25 ч**
 
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 1.1 | **Unit-тесты** во всех модулях: `helpers/`, `error/`, `wrappers/`, `pagination/` | 4-6 ч |
-| 1.2 | **Integration-тесты:** `tests/auth.rs`, `tests/users.rs`, `tests/roles.rs` + testcontainers (postgres) | 6-8 ч |
-| 1.3 | **CI:** `.github/workflows/ci.yml` — check, test, clippy, fmt, audit, coverage (cargo-tarpaulin) | 3 ч |
-| 1.4 | **Pre-commit:** `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo deny` | 1 ч |
-| 1.5 | **Dockerfile:** multi-stage (builder → distroless/cc-debian12), non-root, healthcheck | 2 ч |
-| 1.6 | **docker-compose.yml:** `auth-ms` + `postgres:16-alpine` для dev | 1 ч |
-| 1.7 | **Makefile/justfile:** `dev`, `test`, `lint`, `build`, `docker-build`, `migrate` | 1 ч |
-| 1.8 | **Логирование:** заменить все `.expect()` на `tracing` + proper error propagation | 4-6 ч |
-| 1.9 | **Config validation:** `figment` или самописный валидатор env при старте | 2-3 ч |
-| 1.10 | **Error story:** `thiserror` для всех доменных ошибок, единый error chain | 2 ч |
-| 1.11 | Dependabot/Renovate config | 30 мин |
-| 1.12 | Code coverage badge в README | 30 мин |
+**Зачем:** современный, async-first, совместим с tower/tokio-экосистемой. Service + repository слои остаются как есть (от Rocket не зависят).
 
-**PR:** `feat: phase-1 — tests, CI, Docker, structured logging`
-**Coverage target:** 70%+
-**Обратная совместимость:** 100%
+**Scope:**
 
----
+### 0.1 `Cargo.toml`
+- ❌ `rocket = "0.5.0-rc.2"`, `rocket_sync_db_pools`, `rocket_db_pools`
+- ✅ `axum = "0.7"`, `tower = "0.4"`, `tower-http = { features = ["trace","cors","limit"] }`
+- ✅ `tokio = { version = "1", features = ["full"] }`
+- ✅ `async-trait` (для DI в extractors)
+- Сохраняем: `diesel = "1.4"`, `diesel_migrations`, `argon2`, `jsonwebtoken`, `dotenvy`, `serde`, `chrono`, `uuid`
 
-### Phase 2 — Модель данных v2
-**Цель:** подготовить схему к реальному использованию. _Ломает API — нужна стратегия миграции._
+### 0.2 HTTP handlers (`src/controllers/`)
+Переписать все 12 endpoints с Rocket на Axum:
 
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 2.1 | Добавить `email` (unique, citext, validated) — заменить `name` как login identifier | 3 ч |
-| 2.2 | `username` (unique) оставить как legacy + alias на `email` | 2 ч |
-| 2.3 | `created_at`, `updated_at` (auto), `deleted_at` (soft delete) на users + roles | 2 ч |
-| 2.4 | `is_active` flag + `disabled_reason` (текстом) | 1 ч |
-| 2.5 | `email_verified_at` + `password_changed_at` | 1 ч |
-| 2.6 | **Many-to-many:** `user_roles (user_id, role_id, granted_at, granted_by)` — много ролей на юзера | 3 ч |
-| 2.7 | **Permissions:** `permissions`, `role_permissions (role_id, permission_id)` | 3 ч |
-| 2.8 | **Refresh tokens:** `refresh_tokens (id, user_id, token_hash, family_id, expires_at, revoked_at, replaced_by)` | 4 ч |
-| 2.9 | **Email verification:** `email_verification_tokens (token, user_id, expires_at, used_at)` | 1 ч |
-| 2.10 | **Password reset:** `password_reset_tokens (token, user_id, expires_at, used_at)` | 1 ч |
-| 2.11 | **Audit log:** `audit_log (id, actor_user_id, action, resource_type, resource_id, ip, ua, metadata JSONB, created_at)` | 2 ч |
-| 2.12 | Индексы: unique(email), unique(username), index на FK, partial index `WHERE deleted_at IS NULL` | 1 ч |
-| 2.13 | Backfill: admin → `admin@example.com`, default password сменён на env-обязательный | 2 ч |
+| Rocket                                       | Axum                                                       |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| `#[get("/users")]`                           | `async fn users(State(s): State<Arc<AppState>>) -> ...`    |
+| `Json<Vec<UserDto>>`                         | `Json<Vec<UserDto>>` (тот же тип, axum имеет свой)         |
+| `Status::NotFound`                           | `StatusCode::NOT_FOUND`                                    |
+| `Result<Json<T>, Status>`                    | `Result<Json<T>, AppError>` с `IntoResponse`               |
+| `web::Data<T>` / `State<T>`                  | `axum::extract::State<Arc<T>>`                             |
+| `From<...> for TokenAuth` guard              | `impl FromRequestParts<Arc<AppState>> for AuthUser`         |
+| `From<...> for AdminAuth` guard              | `impl FromRequestParts<...> for AdminUser`                  |
+| `routes![users, get_user, ...]`              | `Router::new().route("/users", get(users))...`             |
+| `rocket::build().mount("/", routes![...])`   | `axum::serve(listener, app)`                               |
 
-**API impact:** новые поля в ответах (не ломает), но `name` → `email` для login = breaking.
-**Миграция:** dual-field период, deprecation warning в `/auth/login` с `name`.
-**PR:** `feat: phase-2 — data model v2 with multi-role, permissions, audit, sessions`
+**Controllers list** (12 шт.):
+- `auth/login.rs` — POST `/auth/login`
+- `auth/register.rs` — POST `/auth/register`
+- `auth/refresh.rs` — POST `/auth/refresh`
+- `auth/change_password.rs` — POST `/auth/change-password`
+- `users/get.rs` — GET `/users`
+- `users/get_by_id.rs` — GET `/users/<id>`
+- `users/create.rs` — POST `/users`
+- `users/update.rs` — PATCH `/users/<id>`
+- `users/delete.rs` — DELETE `/users/<id>`
+- `roles/get.rs` — GET `/roles`
+- `roles/create.rs` — POST `/roles`
+- `roles/update.rs` — PATCH `/roles/<id>`
+- `roles/delete.rs` — DELETE `/roles/<id>`
 
----
+### 0.3 AppState, error type
+- `pub struct AppState { pub pool: DbPool, pub jwt_secret: String, pub jwt_access_ttl: i64, pub jwt_refresh_ttl: i64 }` — обёрнут в `Arc`
+- `enum AppError { Db(...), NotFound, Unauthorized, Forbidden, BadRequest(String), Internal }` с `impl IntoResponse`
 
-### Phase 3 — Безопасность auth
-**Цель:** довести auth до уровня, при котором не стыдно показать.
+### 0.4 Middleware
+- `tower_http::trace::TraceLayer::new_for_http()` — structured request logging
+- `tower_http::cors::CorsLayer` — permissive defaults (настроим в Phase 3)
 
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 3.1 | **Argon2id** с явными параметрами (memory, iterations, parallelism) | 1 ч |
-| 3.2 | **Password policy:** min length, character classes, breach-check через HIBP k-anonymity | 4 ч |
-| 3.3 | **Rate limit:** `tower-governor` или Redis-бэкенд, 5 login attempts / 15 min / email + IP | 4-6 ч |
-| 3.4 | **Generic error responses** на login/register (no info leak) | 30 мин |
-| 3.5 | **Refresh token rotation:** каждый refresh → новый access+refresh, старый invalidated | 4 ч |
-| 3.6 | **Reuse detection:** если использованный rotated refresh приходит → revoke entire family + alert | 2 ч |
-| 3.7 | **JWT upgrade:** HS256 → RS256, key pair через env, `iss`, `aud`, `jti`, `iat`, `nbf` claims | 4 ч |
-| 3.8 | **Email verification flow:** token + email-template (есть Tera/Handlebars/Letter) | 6-8 ч |
-| 3.9 | **Password reset flow:** request → email → set new | 4-6 ч |
-| 3.10 | **MFA / TOTP** (опционально per-user): `totp-rs` crate, QR через `/auth/mfa/setup` | 6-8 ч |
-| 3.11 | **Session management:** list/terminate sessions per user | 3 ч |
-| 3.12 | **Audit log hooks:** login, logout, password change, role change, email change | 3 ч |
-| 3.13 | **CORS:** configurable via env, sensible defaults | 1 ч |
-| 3.14 | **Security headers:** HSTS, X-Content-Type-Options, X-Frame-Options, CSP | 1 ч |
-
-**PR:** `feat: phase-3 — auth security hardening`
-**Breaking:** refresh token rotation = старые refresh-токены не работают. Деплой → одновременный logout всех.
-
----
-
-### Phase 4 — API standards & reusability
-**Цель:** сделать так, чтобы любой проект мог интегрироваться за минуты.
-
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 4.1 | **API versioning:** все маршруты под `/v1/` | 2 ч |
-| 4.2 | **OpenAPI 3.1:** `utoipa` для генерации из кода | 6-8 ч |
-| 4.3 | **Swagger UI:** `/docs` (auth-protected в prod) | 1 ч |
-| 4.4 | **OAuth2 / OIDC:** | 16-24 ч |
-| | • `/oauth2/authorize`, `/oauth2/token`, `/oauth2/userinfo`, `/oauth2/jwks.json` | |
-| | • `.well-known/openid-configuration` | |
-| | • Flows: Authorization Code + PKCE, Client Credentials, Refresh Token | |
-| | • ID tokens (OIDC), `id_token_signed_response_alg: RS256` | |
-| 4.5 | **OAuth2 client management:** CRUD на OAuth2-приложения (client_id/secret, redirect_uris, scopes) | 6-8 ч |
-| 4.6 | **gRPC** (опционально): `tonic` + proto для service-to-service | 8-12 ч |
-| 4.7 | **Webhooks:** events (user.created, role.assigned, etc.) + retry + signature | 6-8 ч |
-| 4.8 | **Bulk operations:** `POST /users/bulk`, `DELETE /users/bulk` | 2 ч |
-| 4.9 | **Filter + sort + search** в list-эндпоинтах | 4 ч |
-| 4.10 | **Field selection:** `?fields=id,email,role` | 2 ч |
-| 4.11 | **Cursor pagination** как альтернатива offset | 3 ч |
-| 4.12 | **Idempotency keys** для POST | 2 ч |
-| 4.13 | **Client SDK (генерация):** Rust, TypeScript, Python — через openapi-generator | 3 ч |
-| 4.14 | **Postman/Insomnia/HTTPie collection** в репо | 2 ч |
-
-**PR серия:** 4.0 (versioning+OpenAPI), 4.1 (OAuth2 core), 4.2 (OAuth2 clients), 4.3 (gRPC), 4.4 (bulk+filter), 4.5 (SDKs)
-**Breaking:** `/auth/login` → `/v1/auth/login`, новые endpoints
-
----
-
-### Phase 5 — Мульти-тенантность
-**Цель:** одна инсталляция обслуживает несколько проектов.
-
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 5.1 | **Tenants** table + CRUD | 4 ч |
-| 5.2 | **Tenant isolation** на уровне repository (middleware + filter) | 6-8 ч |
-| 5.3 | `tid` claim в JWT, валидация при каждом запросе | 3 ч |
-| 5.4 | **Tenant-scoped roles & permissions** | 4 ч |
-| 5.5 | Tenant admin role (в дополнение к global admin) | 2 ч |
-| 5.6 | Cross-tenant access (опционально, explicit allow) | 4 ч |
-| 5.7 | SAML 2.0 (опционально): `samael` | 12-16 ч |
-| 5.8 | LDAP integration (опционально): `ldap3` | 8-12 ч |
-
-**PR:** `feat: phase-5 — multi-tenancy`
-**Migration:** текущая single-tenant база оборачивается в `default_tenant`, `tid = uuid_nil()` для совместимости.
-
----
-
-### Phase 6 — Production-ready operations
-**Цель:** развернуть в K8s за один `helm install`.
-
-| # | Задача | Трудозатраты |
-|---|---|---|
-| 6.1 | **Health endpoints:** `/livez`, `/readyz` (с проверкой БД), `/healthz` | 2 ч |
-| 6.2 | **Metrics:** Prometheus `/metrics` (`prometheus` crate) | 3 ч |
-| 6.3 | **Distributed tracing:** OpenTelemetry export (`tracing-opentelemetry`) | 4-6 ч |
-| 6.4 | **Structured JSON logs** (для Loki/ELK) | 2 ч |
-| 6.5 | **Graceful shutdown:** SIGTERM → drain connections, finish in-flight | 2 ч |
-| 6.6 | **Migration runner:** `diesel migration run` в entrypoint или sidecar | 1 ч |
-| 6.7 | **Multi-arch Docker:** `linux/amd64` + `linux/arm64` через `docker buildx` | 2 ч |
-| 6.8 | **Image signing:** cosign | 1 ч |
-| 6.9 | **SBOM:** cargo-cyclonedx в CI | 1 ч |
-| 6.10 | **Helm chart:** values.yaml, templates/deployment, service, ingress, configmap, secret, hpa, poddisruptionbudget | 8-12 ч |
-| 6.11 | **Документация:** mdbook с architecture.md, api.md, ops.md, dev.md, security.md | 6-8 ч |
-| 6.12 | **Performance benchmarks:** `criterion` на hot paths (auth/login, jwt decode) | 4 ч |
-| 6.13 | **Load test setup:** k6/wrk2 скрипты | 3 ч |
-| 6.14 | **Backup/restore runbook** для Postgres | 1 ч |
-| 6.15 | **Vulnerability scanning** в CI: Trivy, cargo-audit | 2 ч |
-
-**PR:** серия `ops/phase-6-...`
-
----
-
-## 🔀 Стратегия совместимости
-
-1. **Phase 0-1:** 100% backwards compatible — только инфраструктура
-2. **Phase 2:** `name` → `email` для login = breaking. Решение: dual-period (3 мес), в логи пишем deprecation warning
-3. **Phase 3:** refresh-token rotation = форсированный logout всех при деплое
-4. **Phase 4-6:** версионирование `/v1/` — старые пути можно держать как алиасы 6 мес
-
-Все breaking changes — отдельный PR + CHANGELOG.md + announcement в release notes.
-
----
-
-## 🤝 Cross-cutting concerns (везде)
-
-- **Безопасность:** PR-review чеклист (нет `.unwrap()`, нет SQL-injection, нет hardcoded secrets)
-- **Тесты:** каждый PR должен иметь тесты, coverage не падает
-- **Документация:** каждый публичный API — OpenAPI аннотация
-- **Observability:** каждое значимое действие — log event
-- **Локализация:** тексты ошибок на английском (стандарт API), но легко извлекаются
-
----
-
-## 📅 Рекомендованный порядок
-
-```
-Phase 0  →  Phase 1  →  Phase 2  →  Phase 3  →  Phase 4  →  Phase 5  →  Phase 6
-   ⬇         ⬇          ⬇          ⬇          ⬇          ⬇          ⬇
-  1 PR      1 PR        1 PR       1 PR       4 PR       1 PR       5 PR
+### 0.5 Server bootstrap
+```rust
+// main.rs
+let pool = init_pool(&database_url)?;
+let state = Arc::new(AppState { pool, ... });
+let app = Router::new()
+    .route("/auth/login", post(auth::login))
+    .route("/auth/register", post(auth::register))
+    // ...
+    .layer(TraceLayer::new_for_http())
+    .with_state(state);
+let listener = TcpListener::bind("0.0.0.0:8000").await?;
+axum::serve(listener, app).await?;
 ```
 
-**Итого:** ~14 PR, оценка 200-300 ч разработки. По 4-8 ч/неделю = 6-9 месяцев.
+### 0.6 Tests
+- `tests/integration.rs` — поднимаем `TestApp` с in-memory SQLite или test Postgres
+- Smoke-тесты: register → login → access protected → refresh → logout
+- Используем `tower::ServiceExt::oneshot` для in-process запросов
 
-Можно **параллелить** некоторые фазы (например, Phase 1 тесты + Phase 0 документация), но архитектурно они линейны.
+### 0.7 README + LICENSE
+- README: cargo run, env vars, curl-примеры
+- LICENSE: MIT (для персонального использования)
+- .gitignore, .dockerignore: убрать `target/`, добавить `*.swp`
 
----
+**Поставка:** 1 PR с ~4-6 squash-коммитами:
+1. `chore(deps): swap rocket for axum + tower stack`
+2. `feat(http): port auth controllers to axum`
+3. `feat(http): port user/role controllers to axum`
+4. `feat(http): axum AppState, error type, server bootstrap`
+5. `test: integration tests for all 12 endpoints`
+6. `docs: README rewrite + MIT LICENSE`
 
-## ❓ Открытые вопросы (нужен твой ввод)
-
-1. **Лицензия:** MIT или Apache-2.0?
-2. **Скоуп проекта:** плагин OAuth2-провайдера (только keycloak-like features) или **полный IDP** с собственным UI админки?
-3. **Email-доставка:** встроенный SMTP или через env-снапшот к внешнему (SendGrid, AWS SES)?
-4. **Tenants:** обязательно в Phase 5 или опционально?
-5. **gRPC:** нужен ли на старте или отложить?
-6. **Database migration runner:** `diesel migration` в entrypoint или отдельный job?
-7. **OpenAPI codegen:** `utoipa` (compile-time) vs hand-written (полнее контроль)?
-8. **Приоритеты фаз:** что важнее для твоих ближайших проектов?
-   - Phase 0-1 (quality) — must
-   - Phase 2 (data model) — must before Phase 3+
-   - Phase 3 (security) — must
-   - Phase 4 (OAuth2) — must для переиспользования
-   - Phase 5 (tenants) — можно отложить
-   - Phase 6 (ops) — must для prod
-
----
-
-## 🎯 Что я предлагаю начать прямо сейчас
-
-После твоего апрува плана, **Phase 0 + 1 объединю в один PR** (мелкая инфраструктура, легко мерджить). Это ~10-15 ч работы, оформлю как 1 PR с под-PR-ами (squash 3-4 коммита).
-
-**Phase 2 начну только после мержа Phase 0-1** — иначе схема будет мигрировать поверх устаревших deps.
-
-Каждая фаза — отдельный PR. Если что-то пойдёт не так — откатываем один PR.
+**Out of scope** (Phase 1+):
+- CI, Docker, structured logging
+- Data model изменения (email, audit, etc.)
+- OAuth2, OpenAPI/Scalar
+- Diesel → sqlx — отложено в **Future** (Phase 10)
 
 ---
 
-_План составлен Hermes Agent на основе чтения ~1000 строк существующего кода (Rocket 0.5-rc, Diesel 1.4, JWT, RBAC). Готов выслушать правки и приоритеты._
+## Phase 1: Quality infrastructure — **~25-35 ч**
+
+| Что                                        | Подробности                                                  |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| **Unit + integration tests**               | `cargo test` в CI, coverage ≥ 80% на services/, ≥ 60% на repos/ |
+| **CI** (GitHub Actions)                    | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build --release`, `cargo audit` |
+| **Dockerfile** (multi-stage)               | `rust:1.x-slim` builder → `debian:bookworm-slim` runtime, non-root user, `tini` init |
+| **docker-compose.yml**                     | `auth-ms` + `postgres:16` + `mailhog` (dev SMTP)             |
+| **Structured logging** (`tracing`)         | JSON-вывод, request_id, span propagation, `RUST_LOG` env     |
+| **Health endpoints**                       | `GET /livez`, `GET /readyz`                                  |
+| **Pre-commit hooks** (опц.)                | `cargo fmt`, `cargo clippy`, `cargo check`                   |
+
+**Поставка:** 1 PR
+
+---
+
+## Phase 2: Data model v2 — **~25-30 ч**
+
+### 2.1 EmailSender trait (pluggable)
+```rust
+#[async_trait]
+pub trait EmailSender: Send + Sync {
+    async fn send(&self, msg: EmailMessage) -> Result<(), EmailError>;
+}
+```
+Реализации:
+- `SmtpSender` — через `lettre` (production)
+- `FileSender` — пишет в `./tmp/emails/<id>.eml` (dev/test)
+- (Future) `SesSender`, `SendGridSender`, etc.
+
+Конфиг через env: `EMAIL_BACKEND=smtp|file`, `SMTP_URL=...`, `SMTP_FROM=...`
+
+### 2.2 Schema migration (Diesel)
+```sql
+-- Up
+ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX users_email_unique ON users(LOWER(email));
+ALTER TABLE users ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ADD COLUMN deleted_at TIMESTAMPTZ;        -- soft delete
+ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(64);
+ALTER TABLE users ADD COLUMN password_reset_expires_at TIMESTAMPTZ;
+
+-- Multi-role: many-to-many user_roles
+CREATE TABLE user_roles (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by UUID REFERENCES users(id),
+    PRIMARY KEY (user_id, role_id)
+);
+
+-- Permissions: many-to-many role_permissions
+CREATE TABLE permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code VARCHAR(64) NOT NULL UNIQUE,     -- "users.read", "admin.write"
+    description TEXT
+);
+CREATE TABLE role_permissions (
+    role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id UUID NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, permission_id)
+);
+
+-- Refresh token store (rotation + reuse detection)
+CREATE TABLE refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,    -- SHA-256 of the actual token
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    replaced_by UUID REFERENCES refresh_tokens(id)
+);
+CREATE INDEX refresh_tokens_user_idx ON refresh_tokens(user_id);
+
+-- Audit log
+CREATE TABLE audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actor_id UUID REFERENCES users(id),
+    actor_ip INET,
+    action VARCHAR(64) NOT NULL,            -- "user.login", "user.password.change"
+    target_type VARCHAR(32),                -- "user", "role", "token"
+    target_id UUID,
+    metadata JSONB
+);
+CREATE INDEX audit_events_actor_idx ON audit_events(actor_id, occurred_at DESC);
+```
+
+### 2.3 Repositories
+- `UserRepository::find_by_email(email)`, `soft_delete(id)`, `verify_email(id)`
+- `RefreshTokenRepository::insert(...)`, `find_by_hash(...)`, `revoke(id)`, `mark_replaced(...)`
+- `AuditRepository::log(event)` — best-effort, не блокирует запрос при ошибке
+
+### 2.4 Migration runner (по умолчанию)
+```rust
+// main.rs
+if env::var("RUN_MIGRATIONS").unwrap_or_else(|_| "true".into()) == "true" {
+    run_migrations(&pool)?;
+}
+```
+- `RUN_MIGRATIONS=true` (default) — для локалки и dev
+- `RUN_MIGRATIONS=false` — для K8s, где миграции крутятся отдельным Job/init-контейнером
+
+### 2.5 Backward compatibility
+- Все старые endpoints работают, но `email` теперь required при register (dual-write: генерим placeholder email если не указан, требуем верификацию)
+- Bootstrap admin: `admin@local`, пароль из `INITIAL_ADMIN_PASSWORD` env
+
+**Поставка:** 1 PR (большой, ~20 файлов), с явным `BREAKING:` в коммит-сообщении и dual-period поддержкой
+
+---
+
+## Phase 3: Auth security — **~35-50 ч**
+
+| Тема                                | Реализация                                                   |
+| ----------------------------------- | ------------------------------------------------------------ |
+| **Argon2id** с явными параметрами   | `Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::new(19456, 2, 1))` |
+| **Rate limiting**                   | `tower-governor` или `redis-cell`: 5 login/15min per IP, 100 req/min per user |
+| **Refresh rotation + reuse detect** | При refresh: revoke old + issue new, в транзакции. Если `revoked_at` уже стоит — revoken ВСЮ цепочку пользователя → force re-login |
+| **JWT claims**                      | `iss`, `aud`, `sub`, `iat`, `nbf`, `exp`, `jti` (uuid), `roles`, `scope` |
+| **JWT signing**                     | RS256 (генерим ключи в setup, secret в env), kid в header    |
+| **Password policy**                 | Min 12 chars, 3 of {lower, upper, digit, symbol}, проверка при register/change |
+| **HIBP breach check** (опц.)        | k-anonymity API: SHA-1 password → первые 5 chars → проверить suffix |
+| **CORS**                            | `CorsLayer::default().allow_origin(["https://..."])` (env-configurable) |
+| **Security headers**                | `tower-http::set_header` для `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security` (в HTTPS-режиме) |
+| **Audit hooks**                     | `AuditMiddleware` логирует auth-события, можно подписаться на произвольные actions |
+
+**Out of scope (Future):** MFA/TOTP, WebAuthn, SAML, LDAP
+
+**Поставка:** 1 PR, ~15-20 файлов
+
+---
+
+## Phase 4: API standards — **~50-70 ч**
+
+### 4.1 Versioning + OpenAPI
+- Все endpoints под `/v1/...` (alias без префикса → 301 redirect)
+- OpenAPI 3.1 спека через `utoipa` макросы на каждом handler
+- **Scalar UI** на `/docs` (self-hosted HTML+JS, см. https://github.com/scalar/scalar)
+- Спека экспортируется в `openapi.json` (download), подключается к SDK-генератору
+
+### 4.2 OAuth2 / OIDC (как **identity provider**)
+- **Authorization Code + PKCE** (для SPA / native apps)
+- **Client Credentials** (для service-to-service)
+- **Refresh Token** (с rotation из Phase 3)
+- **Discovery**: `GET /.well-known/openid-configuration`, `GET /.well-known/oauth-authorization-server`
+- **JWKS**: `GET /.well-known/jwks.json` (публичные ключи для верификации)
+- **UserInfo**: `GET /v1/userinfo` (OIDC)
+- **Token Introspection**: `POST /v1/oauth/introspect` (RFC 7662)
+- **Token Revocation**: `POST /v1/oauth/revoke` (RFC 7009)
+
+### 4.3 Client management
+- `POST /v1/oauth/clients` — register client (получает `client_id` + `client_secret`)
+- `GET /v1/oauth/clients`, `GET/PATCH/DELETE /v1/oauth/clients/<id>`
+- Scopes: `openid`, `profile`, `email`, `offline_access`, custom
+- Redirect URIs validation (exact match)
+- Client types: `confidential`, `public`
+
+### 4.4 Admin API (для будущего UI)
+- `GET/POST/PATCH/DELETE /v1/admin/users`
+- `GET/POST/PATCH/DELETE /v1/admin/roles`
+- `GET/POST/PATCH/DELETE /v1/admin/clients`
+- `GET /v1/admin/audit` (filter, paginate, export CSV)
+- `GET /v1/admin/stats` (active users, tokens issued, login rate)
+- Все требуют scope `admin:read` или `admin:write`
+
+### 4.5 Прочее
+- Webhooks (HTTP callbacks на события: user.created, role.assigned)
+- Bulk operations (`POST /v1/admin/users/bulk-create`)
+- Filter / sort / search на list endpoints (`?filter[email]=*@example.com&sort=-created_at`)
+- Field selection (`?fields=id,email,name`)
+- Cursor pagination (опц., для больших списков)
+- Idempotency keys (`Idempotency-Key` header, TTL 24h)
+- **Generated SDKs:**
+  - Rust (через `progenitor` или `openapi-gen`)
+  - TypeScript (через `openapi-typescript-codegen` или `openapi-generator`)
+  - Python (через `openapi-python-client` или `openapi-generator`)
+
+**Поставка:** 4-5 PR-ов:
+- `feat(api): v1 versioning + utoipa OpenAPI spec`
+- `feat(oauth): authorization code + PKCE + client credentials`
+- `feat(admin): admin API endpoints + audit query`
+- `feat(perf): filter, sort, search, field selection`
+- `feat(sdk): generate Rust/TS/Python SDKs from OpenAPI`
+
+---
+
+## Phase 5: Production ops — **~35-45 ч**
+
+| Категория       | Что                                                              |
+| --------------- | ---------------------------------------------------------------- |
+| Observability   | `/livez`, `/readyz`, `/healthz` (deep), Prometheus `/metrics`, OpenTelemetry traces, structured JSON logs |
+| Graceful        | `tokio::signal::ctrl_c` → drain → shutdown timeout, in-flight request tracker |
+| Docker          | multi-stage, non-root, multi-arch (amd64 + arm64), cosign-подпись, SBOM (syft) |
+| K8s             | **Helm chart** в `deploy/helm/auth-ms/`: deployment, service, ingress, configmap, secret, hpa, poddisruptionbudget, networkpolicy, serviceaccount, servicemonitor |
+| Docs            | `mdbook` в `docs/`: quickstart, concepts, deployment, API reference, security model, migration guide |
+| Performance     | `criterion` benchmarks для Argon2 verify, JWT sign/verify, refresh flow |
+| Load testing    | `k6` скрипты в `tests/load/`: login burst, refresh storm, sustained 1k RPS |
+| CI/CD           | GitHub Actions: build → test → audit → docker build+push → helm lint → trivy scan → sign |
+| Security scan   | `cargo audit`, `cargo deny`, `trivy fs`, `grype`                 |
+
+**Поставка:** 5 PR-ов
+
+---
+
+## Future (Phase 7+, по запросу)
+
+| #  | Что                              | Триггер / приоритет                                          |
+| -- | -------------------------------- | ------------------------------------------------------------ |
+| 7  | gRPC API                         | Когда появится внутренний сервис, которому нужна низкая latency |
+| 8  | Admin UI                         | Phase 4 готов, не хочется Postman'ом рулить                  |
+| 9  | Multi-tenancy                    | Когда проект станет B2B / SaaS                               |
+| 10 | Diesel → sqlx (async)            | Когда Axum + sync-Diesel начнёт быть узким местом           |
+| 11 | MFA / TOTP / WebAuthn            | Когда аудитория вырастет или требования compliance          |
+| 12 | SAML / LDAP                      | Enterprise-клиенты                                           |
+| 13 | Geo-distributed / multi-region   | Глобальный launch                                            |
+| 14 | Email templates engine          | Когда разных писем станет > 5 и хочется версионировать       |
+
+---
+
+## Оценки сводно
+
+| Фаза   | Часы          | PR-ов | Готовность |
+| ------ | ------------- | ----- | ---------- |
+| 0      | 15-25         | 1     | 🟡 Нужен аппрув перед стартом |
+| 1      | 25-35         | 1     | 🟢 После 0 |
+| 2      | 25-30         | 1     | 🟢 После 1 |
+| 3      | 35-50         | 1     | 🟢 После 2 |
+| 4      | 50-70         | 4-5   | 🟢 После 3 |
+| 5      | 35-45         | 5     | 🟢 После 4 |
+| **Итого** | **~200-280**  | **~14** | **~3-5 месяцев** (part-time) |
+
+---
+
+## Следующий шаг
+
+**Phase 0 (Axum rewrite) — стартую как draft PR** сразу после твоего подтверждения этого плана. Без подтверждения кода не пишу.
+
+Что будет в draft PR:
+- `Cargo.toml` обновлён (rocket → axum)
+- Все 12 handlers переписаны на axum
+- AppState + error type
+- Integration tests (smoke)
+- README + LICENSE
+
+После того как ты смерджишь Phase 0 → Phase 1 (тесты, CI, Docker) → Phase 2 (data model v2) → ...
+
+Готов начинать?
