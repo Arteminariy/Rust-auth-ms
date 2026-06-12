@@ -1,0 +1,18 @@
+[package]
+name = "auth-ms-email"
+description = "Pluggable email sender (SMTP, file-based, future: SES, SendGrid)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+lettre = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
