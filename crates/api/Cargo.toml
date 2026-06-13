@@ -27,7 +27,6 @@ jsonwebtoken = { workspace = true }
 
 # Internal crates
 auth-ms-core = { path = "../core" }
-auth-ms-email = { path = "../email" }
 
 # Utilities
 serde = { workspace = true }

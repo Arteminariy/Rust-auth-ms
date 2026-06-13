@@ -3,13 +3,12 @@ resolver = "2"
 members = [
     "crates/api",
     "crates/core",
-    "crates/email",
 ]
 
 [workspace.package]
 version = "0.2.0"
-edition = "2021"
-rust-version = "1.75"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 authors = ["Artem <arteminariy@yandex.ru>"]
 repository = "https://github.com/Arteminariy/Rust-auth-ms"
@@ -43,9 +42,6 @@ thiserror = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Email (Phase 0a: trait only; lettre added in Phase 0b/c)
-lettre = "0.11"
 
 [profile.release]
 opt-level = 3
