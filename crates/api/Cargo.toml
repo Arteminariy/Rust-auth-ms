@@ -1,0 +1,40 @@
+[package]
+name = "auth-ms-api"
+description = "HTTP layer (Axum) for the auth microservice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Workspace HTTP stack
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Database
+diesel = { workspace = true }
+diesel_migrations = { workspace = true }
+r2d2 = { workspace = true }
+
+# Auth primitives
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+
+# Internal crates
+auth-ms-core = { path = "../core" }
+
+# Utilities
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dotenvy = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
