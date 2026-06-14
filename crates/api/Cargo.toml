@@ -15,18 +15,20 @@ tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+http = "1"
 
 # Database
 diesel = { workspace = true }
 diesel_migrations = { workspace = true }
 r2d2 = { workspace = true }
 
-# Auth primitives
+# Crypto & auth
 argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 
 # Internal crates
 auth-ms-core = { path = "../core" }
+auth-ms-email = { path = "../email" }
 
 # Utilities
 serde = { workspace = true }
