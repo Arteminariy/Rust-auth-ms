@@ -5,4 +5,14 @@
 //! reuse the business logic in other surfaces (CLI, gRPC) later without
 //! dragging in the HTTP stack.
 
-#![allow(clippy::result_large_err)] // TODO: tighten as types stabilise
+pub mod auth;
+pub mod dto;
+pub mod error;
+pub mod models;
+pub mod pagination;
+pub mod repositories;
+pub mod schema;
+pub mod services;
+
+pub use error::{Result, ServiceError};
+pub use auth::{AccessClaim, JwtError, RefreshClaim};
